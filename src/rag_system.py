@@ -376,7 +376,16 @@ Answer:"""
                     context=context,
                     question=query
                 )
-                response_text = self.llm.predict(prompt)
+                try:
+                    response_text = self.llm.predict(prompt)
+                except Exception as e:
+                    logger.error(f"Error calling LLM: {e}")
+                    # Try with just the LLM's _call method
+                    try:
+                        response_text = self.llm._call(prompt)
+                    except Exception as e2:
+                        logger.error(f"Error with _call method: {e2}")
+                        response_text = "I apologize, but I'm having trouble generating a response right now. Please try asking a simpler question."
             
             # Clean up response
             response_text = response_text.strip()
