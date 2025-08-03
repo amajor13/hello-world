@@ -72,7 +72,7 @@ PAGE_TITLE=Free RAG Chatbot
 PAGE_ICON=🤖
 """
     
-    with open(".env", "w") as f:
+    with open(".env", "w", encoding="utf-8") as f:
         f.write(env_content)
     
     print("✅ Environment configured for free models")
