@@ -20,7 +20,7 @@ from src.rag_system import RAGChatbot
 class CLIChatInterface:
     """Command-line interface for the RAG chatbot."""
     
-    def __init__(self, openai_api_key: Optional[str] = None, use_openai: bool = True):
+    def __init__(self, openai_api_key: Optional[str] = None, use_openai: bool = False):
         """
         Initialize the CLI chat interface.
         
@@ -46,10 +46,15 @@ class CLIChatInterface:
                 openai_api_key=Config.OPENAI_API_KEY,
                 model_name=Config.OPENAI_MODEL,
                 embedding_model=Config.EMBEDDING_MODEL,
-                use_openai=self.use_openai,
+                use_openai=self.use_openai or Config.USE_OPENAI,
+                free_llm_model=Config.FREE_LLM_MODEL,
+                free_embedding_model=Config.FREE_EMBEDDING_MODEL,
                 chunk_size=Config.CHUNK_SIZE,
                 chunk_overlap=Config.CHUNK_OVERLAP,
-                retrieval_k=Config.RETRIEVAL_K
+                retrieval_k=Config.RETRIEVAL_K,
+                model_device=Config.MODEL_DEVICE,
+                max_model_length=Config.MAX_MODEL_LENGTH,
+                model_temperature=Config.MODEL_TEMPERATURE
             )
             
             print("✅ Chatbot initialized successfully!")
@@ -89,11 +94,19 @@ class CLIChatInterface:
         
         # Configuration
         print(f"🔧 Configuration:")
-        print(f"   • OpenAI API Key: {'✅ Set' if Config.OPENAI_API_KEY else '❌ Not set'}")
-        print(f"   • Model: {Config.OPENAI_MODEL}")
-        print(f"   • Using OpenAI: {'Yes' if self.use_openai else 'No (Local models)'}")
+        if self.use_openai or Config.USE_OPENAI:
+            print(f"   • Model Type: OpenAI")
+            print(f"   • API Key: {'✅ Set' if Config.OPENAI_API_KEY else '❌ Not set'}")
+            print(f"   • LLM Model: {Config.OPENAI_MODEL}")
+            print(f"   • Embedding Model: {Config.EMBEDDING_MODEL}")
+        else:
+            print(f"   • Model Type: Free/Open Source")
+            print(f"   • LLM Model: {Config.FREE_LLM_MODEL}")
+            print(f"   • Embedding Model: {Config.FREE_EMBEDDING_MODEL}")
+        
         print(f"   • Documents Path: {Config.DOCUMENTS_PATH}")
         print(f"   • Vector Store Path: {Config.VECTOR_STORE_PATH}")
+        print(f"   • Device: {Config.MODEL_DEVICE}")
         
         # Vector Store Info
         if self.chatbot:
@@ -102,6 +115,14 @@ class CLIChatInterface:
             print(f"\n📚 Vector Store:")
             print(f"   • Document Chunks: {doc_count}")
             print(f"   • Status: {'✅ Active' if doc_count > 0 else '❌ Empty'}")
+            
+            # Model availability
+            system_info = self.chatbot.get_system_info()
+            availability = system_info.get('availability', {})
+            print(f"\n🔧 Model Availability:")
+            print(f"   • Transformers: {'✅' if availability.get('transformers') else '❌'}")
+            print(f"   • PyTorch: {'✅' if availability.get('torch') else '❌'}")
+            print(f"   • Sentence Transformers: {'✅' if availability.get('sentence_transformers') else '❌'}")
         else:
             print(f"\n📚 Vector Store: Not initialized")
         
@@ -220,9 +241,9 @@ def main():
     )
     
     parser.add_argument(
-        "--local",
+        "--openai",
         action="store_true",
-        help="Use local models instead of OpenAI"
+        help="Use OpenAI models (requires API key)"
     )
     
     parser.add_argument(
@@ -252,7 +273,7 @@ def main():
     args = parser.parse_args()
     
     # Create CLI interface
-    use_openai = not args.local
+    use_openai = args.openai or (args.api_key is not None)
     cli = CLIChatInterface(
         openai_api_key=args.api_key,
         use_openai=use_openai
