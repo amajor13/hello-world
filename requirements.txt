@@ -15,3 +15,8 @@ pandas==2.0.3
 requests==2.31.0
 beautifulsoup4==4.12.2
 lxml==4.9.3
+transformers==4.36.0
+torch==2.1.1
+accelerate==0.25.0
+huggingface-hub==0.19.4
+langchain-huggingface==0.0.1
