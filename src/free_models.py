@@ -19,6 +19,7 @@ except ImportError:
 
 from langchain.llms.base import LLM
 from langchain.embeddings.base import Embeddings
+from langchain.callbacks.manager import CallbackManagerForLLMRun
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -27,12 +28,18 @@ logger = logging.getLogger(__name__)
 class HuggingFaceLLM(LLM):
     """Free Hugging Face LLM implementation."""
     
+    model_name: str = "microsoft/DialoGPT-medium"
+    max_length: int = 512
+    temperature: float = 0.7
+    device: str = "auto"
+    
     def __init__(
         self,
         model_name: str = "microsoft/DialoGPT-medium",
         max_length: int = 512,
         temperature: float = 0.7,
-        device: str = "auto"
+        device: str = "auto",
+        **kwargs
     ):
         """
         Initialize the Hugging Face LLM.
@@ -43,7 +50,7 @@ class HuggingFaceLLM(LLM):
             temperature: Sampling temperature
             device: Device to run the model on
         """
-        super().__init__()
+        super().__init__(**kwargs)
         
         if not TRANSFORMERS_AVAILABLE:
             raise ImportError("transformers package is required for free models. Install with: pip install transformers torch")
@@ -82,7 +89,13 @@ class HuggingFaceLLM(LLM):
                 device=0 if self.device == "cuda" else -1
             )
     
-    def _call(self, prompt: str, stop: Optional[List[str]] = None) -> str:
+    def _call(
+        self, 
+        prompt: str, 
+        stop: Optional[List[str]] = None,
+        run_manager: Optional[CallbackManagerForLLMRun] = None,
+        **kwargs: Any,
+    ) -> str:
         """Generate text from the prompt."""
         try:
             # Clean up the prompt
@@ -119,86 +132,62 @@ class HuggingFaceLLM(LLM):
             
         except Exception as e:
             logger.error(f"Error generating response: {e}")
-            return f"I apologize, but I encountered an error while processing your request: {str(e)}"
+            return f"I apologize, but I encountered an error while processing your request."
     
     @property
     def _llm_type(self) -> str:
         return "huggingface"
+    
+    @property
+    def _identifying_params(self) -> Dict[str, Any]:
+        """Get the identifying parameters."""
+        return {
+            "model_name": self.model_name,
+            "max_length": self.max_length,
+            "temperature": self.temperature,
+            "device": self.device,
+        }
 
 
-class FreeConversationalLLM(LLM):
-    """Optimized free LLM for conversational tasks."""
+class SimpleLLM(LLM):
+    """Simple fallback LLM that works without complex dependencies."""
     
-    def __init__(self, model_name: str = "microsoft/DialoGPT-small"):
-        super().__init__()
-        
-        if not TRANSFORMERS_AVAILABLE:
-            raise ImportError("transformers package is required")
-        
-        self.model_name = model_name
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        
-        logger.info(f"Loading conversational model {model_name}...")
-        
-        try:
-            self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-            self.model = AutoModelForCausalLM.from_pretrained(
-                model_name,
-                torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
-                trust_remote_code=True
-            ).to(self.device)
-            
-            # Set pad token if not set
-            if self.tokenizer.pad_token is None:
-                self.tokenizer.pad_token = self.tokenizer.eos_token
-                
-            logger.info(f"✅ Successfully loaded {model_name}")
-        except Exception as e:
-            logger.error(f"Failed to load {model_name}: {e}")
-            raise
+    model_name: str = "simple_fallback"
     
-    def _call(self, prompt: str, stop: Optional[List[str]] = None) -> str:
-        """Generate conversational response."""
-        try:
-            # Format prompt for conversation
-            formatted_prompt = f"Context: {prompt}\n\nResponse:"
-            
-            # Tokenize
-            inputs = self.tokenizer.encode(
-                formatted_prompt, 
-                return_tensors="pt", 
-                truncation=True, 
-                max_length=512
-            ).to(self.device)
-            
-            # Generate
-            with torch.no_grad():
-                outputs = self.model.generate(
-                    inputs,
-                    max_length=inputs.shape[1] + 150,
-                    temperature=0.7,
-                    do_sample=True,
-                    pad_token_id=self.tokenizer.pad_token_id,
-                    eos_token_id=self.tokenizer.eos_token_id,
-                    num_return_sequences=1
-                )
-            
-            # Decode response
-            response = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-            
-            # Extract only the new part
-            if "Response:" in response:
-                response = response.split("Response:")[-1].strip()
-            
-            return response if response else "I understand your question, but need more details to help you better."
-            
-        except Exception as e:
-            logger.error(f"Error in conversation generation: {e}")
-            return "I apologize for the technical difficulty. Could you please rephrase your question?"
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.model_name = "simple_fallback"
+        logger.info("✅ Using simple fallback LLM")
+    
+    def _call(
+        self, 
+        prompt: str, 
+        stop: Optional[List[str]] = None,
+        run_manager: Optional[CallbackManagerForLLMRun] = None,
+        **kwargs: Any,
+    ) -> str:
+        """Generate a simple response."""
+        # Simple keyword-based responses
+        prompt_lower = prompt.lower()
+        
+        if "python" in prompt_lower:
+            return "Python is a versatile programming language known for its simplicity and readability. It's widely used in web development, data science, AI, and automation."
+        elif "machine learning" in prompt_lower or "ml" in prompt_lower:
+            return "Machine learning is a subset of AI that enables computers to learn and improve from experience without being explicitly programmed."
+        elif "artificial intelligence" in prompt_lower or "ai" in prompt_lower:
+            return "Artificial Intelligence (AI) refers to the simulation of human intelligence in machines that are programmed to think and learn like humans."
+        elif "deep learning" in prompt_lower:
+            return "Deep learning is a subset of machine learning that uses artificial neural networks with multiple layers to model and understand complex patterns."
+        else:
+            return "I can help answer questions about the loaded documents. Please try asking about topics covered in your documents."
     
     @property
     def _llm_type(self) -> str:
-        return "free_conversational"
+        return "simple"
+    
+    @property
+    def _identifying_params(self) -> Dict[str, Any]:
+        return {"model_name": self.model_name}
 
 
 class FreeSentenceTransformerEmbeddings(Embeddings):
@@ -216,30 +205,60 @@ class FreeSentenceTransformerEmbeddings(Embeddings):
         self.model_name = model_name
         
         try:
+            if not TRANSFORMERS_AVAILABLE:
+                raise ImportError("sentence-transformers not available")
+            
             self.model = SentenceTransformer(model_name)
             logger.info(f"✅ Loaded embedding model: {model_name}")
         except Exception as e:
-            logger.error(f"Failed to load {model_name}, falling back to all-MiniLM-L6-v2")
-            self.model = SentenceTransformer("all-MiniLM-L6-v2")
+            logger.error(f"Failed to load {model_name}: {e}")
+            logger.info("Using simple embeddings fallback...")
+            self.model = None
+            self.model_name = "simple_fallback"
     
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         """Embed a list of documents."""
+        if self.model is None:
+            # Simple hash-based embeddings as fallback
+            return self._simple_embeddings(texts)
+        
         try:
             embeddings = self.model.encode(texts, convert_to_tensor=False)
             return embeddings.tolist()
         except Exception as e:
             logger.error(f"Error embedding documents: {e}")
-            # Return dummy embeddings as fallback
-            return [[0.0] * 384 for _ in texts]
+            return self._simple_embeddings(texts)
     
     def embed_query(self, text: str) -> List[float]:
         """Embed a single query."""
+        if self.model is None:
+            return self._simple_embeddings([text])[0]
+        
         try:
             embedding = self.model.encode([text], convert_to_tensor=False)
             return embedding[0].tolist()
         except Exception as e:
             logger.error(f"Error embedding query: {e}")
-            return [0.0] * 384
+            return self._simple_embeddings([text])[0]
+    
+    def _simple_embeddings(self, texts: List[str]) -> List[List[float]]:
+        """Create simple hash-based embeddings as fallback."""
+        import hashlib
+        embeddings = []
+        
+        for text in texts:
+            # Create pseudo-embeddings based on text hash
+            hash_obj = hashlib.md5(text.encode())
+            hash_bytes = hash_obj.digest()
+            # Convert to float values between -1 and 1
+            embedding = [(b / 128.0 - 1.0) for b in hash_bytes]
+            # Pad to 384 dimensions
+            while len(embedding) < 384:
+                embedding.extend(embedding[:384 - len(embedding)])
+            embedding = embedding[:384]
+            embeddings.append(embedding)
+        
+        return embeddings
 
 
 def get_free_llm(model_type: str = "conversational") -> LLM:
@@ -252,6 +271,10 @@ def get_free_llm(model_type: str = "conversational") -> LLM:
     Returns:
         Free LLM instance
     """
+    if not TRANSFORMERS_AVAILABLE:
+        logger.warning("Transformers not available, using simple fallback LLM")
+        return SimpleLLM()
+    
     models = {
         "conversational": "microsoft/DialoGPT-small",
         "general": "distilgpt2",
@@ -262,14 +285,11 @@ def get_free_llm(model_type: str = "conversational") -> LLM:
     model_name = models.get(model_type, "microsoft/DialoGPT-small")
     
     try:
-        if model_type == "conversational":
-            return FreeConversationalLLM(model_name)
-        else:
-            return HuggingFaceLLM(model_name)
+        return HuggingFaceLLM(model_name=model_name)
     except Exception as e:
         logger.error(f"Failed to load {model_name}: {e}")
-        # Ultimate fallback
-        return HuggingFaceLLM("distilgpt2")
+        logger.info("Using simple fallback LLM...")
+        return SimpleLLM()
 
 
 def get_free_embeddings(model_type: str = "fast") -> Embeddings:
