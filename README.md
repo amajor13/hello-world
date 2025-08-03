@@ -4,15 +4,17 @@ A comprehensive Retrieval-Augmented Generation (RAG) chatbot system that allows 
 
 ## 🌟 Features
 
-- **Multi-Format Document Support**: PDF, DOCX, TXT, and Markdown files
-- **Advanced Text Processing**: Intelligent chunking and embedding generation
-- **Vector Search**: Efficient similarity search using ChromaDB
-- **Conversation History**: Context-aware responses with conversation memory
-- **Multiple Interfaces**: Both web UI (Streamlit) and command-line interface
-- **Flexible Configuration**: Support for OpenAI models or local alternatives
-- **Source Attribution**: Responses include source document references
-- **Real-time Document Upload**: Add documents on-the-fly via web interface
-- **Modern UI**: Beautiful, responsive web interface with custom styling
+- **🆓 100% FREE**: Works completely with open-source models - no API keys required!
+- **📄 Multi-Format Support**: PDF, DOCX, TXT, and Markdown files
+- **🧠 Smart Processing**: Intelligent chunking and embedding generation
+- **🔍 Vector Search**: Efficient similarity search using ChromaDB
+- **💬 Conversation Memory**: Context-aware responses with conversation history
+- **🎯 Dual Interface**: Both beautiful web UI and command-line interface
+- **⚙️ Flexible Models**: Free models (default) or OpenAI models (optional)
+- **📚 Source Attribution**: Always shows which documents were used for answers
+- **📤 Real-time Upload**: Add documents on-the-fly via web interface
+- **🎨 Modern Design**: Beautiful, responsive interface with custom styling
+- **⚡ Quick Launch**: One-command setup and launch
 
 ## 🏗️ Architecture
 
@@ -36,25 +38,38 @@ A comprehensive Retrieval-Augmented Generation (RAG) chatbot system that allows 
                     └─────────────────┘
 ```
 
-## 🚀 Quick Start
+## 🚀 Quick Start (100% FREE!)
 
-### 1. Clone and Setup
+### 🎯 Super Quick Launch (Recommended)
+
+```bash
+# Just run this - it handles everything!
+python launch.py
+```
+
+### 🛠️ Manual Setup
 
 ```bash
 git clone <repository-url>
 cd rag-chatbot
-python setup.py  # Automated setup script
+pip install -r requirements.txt
+python launch.py
 ```
 
-### 2. Configure Environment
+### 🔧 Configuration
 
-Create a `.env` file or use the generated one:
-
+**Default (FREE models)** - No setup needed!
 ```env
+USE_OPENAI=false
+FREE_LLM_MODEL=conversational     # Microsoft DialoGPT
+FREE_EMBEDDING_MODEL=fast        # Sentence Transformers
+```
+
+**Optional (OpenAI models)** - Better quality but requires API key:
+```env
+USE_OPENAI=true
 OPENAI_API_KEY=your_openai_api_key_here
 OPENAI_MODEL=gpt-3.5-turbo
-EMBEDDING_MODEL=text-embedding-ada-002
-USE_OPENAI=true
 ```
 
 ### 3. Add Documents
@@ -67,15 +82,18 @@ Place your documents in the `documents/` folder:
 
 ### 4. Run the Application
 
-**Web Interface:**
+**🎯 Easiest Way:**
 ```bash
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+python launch.py  # Choose CLI or Web interface
+```
+
+**🌐 Web Interface:**
+```bash
 streamlit run app.py
 ```
 
-**Command Line Interface:**
+**💻 Command Line Interface:**
 ```bash
-source venv/bin/activate  # On Windows: venv\Scripts\activate
 python cli_chat.py --load-docs  # Load documents first
 python cli_chat.py             # Start chatting
 ```
@@ -120,7 +138,7 @@ python cli_chat.py --status
 ### Prerequisites
 
 - Python 3.8 or higher
-- OpenAI API key (optional, for better performance)
+- **No API keys required!** (OpenAI API key optional for enhanced performance)
 
 ### Manual Installation
 
@@ -129,25 +147,21 @@ python cli_chat.py --status
 git clone <repository-url>
 cd rag-chatbot
 
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
 # Install dependencies
 pip install -r requirements.txt
 
-# Create necessary directories
-mkdir -p documents vector_store
-
-# Set up environment variables
-cp .env.example .env
-# Edit .env with your OpenAI API key
+# Launch the chatbot
+python launch.py
 ```
 
-### Automated Installation
+### Alternative Setup
 
 ```bash
-python setup.py
+# Traditional setup with virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+pip install -r requirements.txt
+python launch.py
 ```
 
 ## 📁 Project Structure

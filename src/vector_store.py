@@ -1,15 +1,26 @@
 import os
 import logging
 import pickle
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 from pathlib import Path
 
 import chromadb
 from chromadb.config import Settings
-from langchain.embeddings import OpenAIEmbeddings
 from langchain.vectorstores import Chroma
 from langchain.schema import Document
-from sentence_transformers import SentenceTransformer
+from langchain.embeddings.base import Embeddings
+
+try:
+    from langchain.embeddings import OpenAIEmbeddings
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
+
+try:
+    from sentence_transformers import SentenceTransformer
+    SENTENCE_TRANSFORMERS_AVAILABLE = True
+except ImportError:
+    SENTENCE_TRANSFORMERS_AVAILABLE = False
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -22,8 +33,9 @@ class VectorStoreManager:
         self,
         collection_name: str = "rag_documents",
         persist_directory: str = "./vector_store",
+        embedding_function: Optional[Embeddings] = None,
         embedding_model: str = "text-embedding-ada-002",
-        use_openai: bool = True
+        use_openai: bool = False
     ):
         """
         Initialize the vector store manager.
@@ -31,8 +43,9 @@ class VectorStoreManager:
         Args:
             collection_name: Name of the collection in ChromaDB
             persist_directory: Directory to persist the vector store
-            embedding_model: Model to use for embeddings
-            use_openai: Whether to use OpenAI embeddings or local model
+            embedding_function: Custom embedding function to use
+            embedding_model: Model to use for embeddings (if not using custom function)
+            use_openai: Whether to use OpenAI embeddings (fallback)
         """
         self.collection_name = collection_name
         self.persist_directory = persist_directory
@@ -43,11 +56,18 @@ class VectorStoreManager:
         Path(persist_directory).mkdir(parents=True, exist_ok=True)
         
         # Initialize embeddings
-        if use_openai:
-            self.embeddings = OpenAIEmbeddings(model=embedding_model)
+        if embedding_function:
+            self.embeddings = embedding_function
+            logger.info("✅ Using provided embedding function")
+        elif use_openai and OPENAI_AVAILABLE:
+            try:
+                self.embeddings = OpenAIEmbeddings(model=embedding_model)
+                logger.info(f"✅ Using OpenAI embeddings: {embedding_model}")
+            except Exception as e:
+                logger.error(f"Failed to initialize OpenAI embeddings: {e}")
+                self.embeddings = self._get_fallback_embeddings()
         else:
-            # Use local sentence transformers model as fallback
-            self.embeddings = LocalEmbeddings()
+            self.embeddings = self._get_fallback_embeddings()
         
         # Initialize ChromaDB client
         self.client = chromadb.PersistentClient(
@@ -61,6 +81,15 @@ class VectorStoreManager:
         # Initialize vector store
         self.vector_store = None
         self._load_or_create_vector_store()
+    
+    def _get_fallback_embeddings(self) -> Embeddings:
+        """Get fallback embeddings if OpenAI is not available."""
+        if SENTENCE_TRANSFORMERS_AVAILABLE:
+            logger.info("Using sentence-transformers fallback embeddings")
+            return LocalEmbeddings()
+        else:
+            logger.warning("No embedding models available, using dummy embeddings")
+            return DummyEmbeddings()
     
     def _load_or_create_vector_store(self):
         """Load existing vector store or create a new one."""
@@ -182,7 +211,7 @@ class VectorStoreManager:
             }
         except Exception as e:
             logger.error(f"Error getting collection info: {str(e)}")
-            return {}
+            return {"name": self.collection_name, "count": 0, "metadata": {}}
     
     def reset_vector_store(self):
         """Reset the vector store by deleting and recreating it."""
@@ -194,7 +223,7 @@ class VectorStoreManager:
             logger.error(f"Error resetting vector store: {str(e)}")
 
 
-class LocalEmbeddings:
+class LocalEmbeddings(Embeddings):
     """Local embeddings using sentence-transformers as fallback for OpenAI."""
     
     def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
@@ -204,12 +233,67 @@ class LocalEmbeddings:
         Args:
             model_name: Name of the sentence transformer model
         """
-        self.model = SentenceTransformer(model_name)
+        if not SENTENCE_TRANSFORMERS_AVAILABLE:
+            raise ImportError("sentence-transformers is required for local embeddings")
+        
+        try:
+            self.model = SentenceTransformer(model_name)
+            logger.info(f"✅ Loaded local embedding model: {model_name}")
+        except Exception as e:
+            logger.error(f"Failed to load {model_name}: {e}")
+            # Try a smaller fallback model
+            try:
+                self.model = SentenceTransformer("all-MiniLM-L6-v2")
+                logger.info("✅ Loaded fallback embedding model: all-MiniLM-L6-v2")
+            except Exception as e2:
+                logger.error(f"Failed to load fallback model: {e2}")
+                raise
     
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         """Embed a list of documents."""
-        return self.model.encode(texts).tolist()
+        try:
+            embeddings = self.model.encode(texts, convert_to_tensor=False)
+            return embeddings.tolist()
+        except Exception as e:
+            logger.error(f"Error embedding documents: {e}")
+            # Return dummy embeddings as ultimate fallback
+            return [[0.0] * 384 for _ in texts]
     
     def embed_query(self, text: str) -> List[float]:
         """Embed a single query."""
-        return self.model.encode([text])[0].tolist()
+        try:
+            embedding = self.model.encode([text], convert_to_tensor=False)
+            return embedding[0].tolist()
+        except Exception as e:
+            logger.error(f"Error embedding query: {e}")
+            return [0.0] * 384
+
+
+class DummyEmbeddings(Embeddings):
+    """Dummy embeddings for testing when no real embeddings are available."""
+    
+    def __init__(self, dimension: int = 384):
+        """Initialize dummy embeddings with fixed dimension."""
+        self.dimension = dimension
+        logger.warning("⚠️  Using dummy embeddings - search quality will be poor")
+    
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        """Return dummy embeddings for documents."""
+        import hashlib
+        embeddings = []
+        for text in texts:
+            # Create pseudo-embeddings based on text hash
+            hash_obj = hashlib.md5(text.encode())
+            hash_bytes = hash_obj.digest()
+            # Convert to float values between -1 and 1
+            embedding = [(b / 128.0 - 1.0) for b in hash_bytes]
+            # Pad or truncate to desired dimension
+            while len(embedding) < self.dimension:
+                embedding.extend(embedding[:self.dimension - len(embedding)])
+            embedding = embedding[:self.dimension]
+            embeddings.append(embedding)
+        return embeddings
+    
+    def embed_query(self, text: str) -> List[float]:
+        """Return dummy embedding for query."""
+        return self.embed_documents([text])[0]

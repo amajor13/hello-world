@@ -3,8 +3,14 @@ import logging
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
 
-from langchain.llms import OpenAI
-from langchain.chat_models import ChatOpenAI
+try:
+    from langchain.llms import OpenAI
+    from langchain.chat_models import ChatOpenAI
+    from langchain.embeddings import OpenAIEmbeddings
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
+
 from langchain.prompts import PromptTemplate, ChatPromptTemplate
 from langchain.chains import RetrievalQA
 from langchain.schema import Document, HumanMessage, SystemMessage
@@ -12,6 +18,7 @@ from langchain.callbacks.base import BaseCallbackHandler
 
 from .document_loader import DocumentLoader
 from .vector_store import VectorStoreManager
+from .free_models import get_free_llm, get_free_embeddings, check_model_availability
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -84,10 +91,15 @@ class RAGChatbot:
         openai_api_key: Optional[str] = None,
         model_name: str = "gpt-3.5-turbo",
         embedding_model: str = "text-embedding-ada-002",
-        use_openai: bool = True,
+        use_openai: bool = False,  # Default to free models
+        free_llm_model: str = "conversational",
+        free_embedding_model: str = "fast",
         chunk_size: int = 1000,
         chunk_overlap: int = 200,
-        retrieval_k: int = 4
+        retrieval_k: int = 4,
+        model_device: str = "auto",
+        max_model_length: int = 512,
+        model_temperature: float = 0.7
     ):
         """
         Initialize the RAG chatbot.
@@ -95,23 +107,37 @@ class RAGChatbot:
         Args:
             documents_path: Path to documents directory
             vector_store_path: Path to vector store
-            openai_api_key: OpenAI API key
-            model_name: LLM model name
-            embedding_model: Embedding model name
-            use_openai: Whether to use OpenAI or local models
+            openai_api_key: OpenAI API key (optional)
+            model_name: OpenAI model name
+            embedding_model: OpenAI embedding model name
+            use_openai: Whether to use OpenAI or free models
+            free_llm_model: Type of free LLM model to use
+            free_embedding_model: Type of free embedding model to use
             chunk_size: Text chunk size for splitting
             chunk_overlap: Overlap between chunks
             retrieval_k: Number of documents to retrieve
+            model_device: Device to run models on
+            max_model_length: Maximum model output length
+            model_temperature: Model temperature
         """
         self.documents_path = documents_path
         self.vector_store_path = vector_store_path
         self.model_name = model_name
         self.embedding_model = embedding_model
         self.use_openai = use_openai
+        self.free_llm_model = free_llm_model
+        self.free_embedding_model = free_embedding_model
         self.retrieval_k = retrieval_k
+        self.model_device = model_device
+        self.max_model_length = max_model_length
+        self.model_temperature = model_temperature
         
-        # Set API key
-        if openai_api_key:
+        # Check model availability
+        availability = check_model_availability()
+        logger.info(f"Model availability: {availability}")
+        
+        # Set API key if using OpenAI
+        if openai_api_key and use_openai:
             os.environ["OPENAI_API_KEY"] = openai_api_key
         
         # Initialize components
@@ -120,24 +146,45 @@ class RAGChatbot:
             chunk_overlap=chunk_overlap
         )
         
+        # Initialize embeddings
+        if use_openai and OPENAI_AVAILABLE and openai_api_key:
+            try:
+                self.embeddings = OpenAIEmbeddings(model=embedding_model)
+                logger.info(f"✅ Using OpenAI embeddings: {embedding_model}")
+            except Exception as e:
+                logger.warning(f"Failed to initialize OpenAI embeddings: {e}")
+                logger.info("Falling back to free embeddings...")
+                self.embeddings = get_free_embeddings(free_embedding_model)
+                self.use_openai = False
+        else:
+            logger.info(f"Using free embeddings: {free_embedding_model}")
+            self.embeddings = get_free_embeddings(free_embedding_model)
+        
         self.vector_store_manager = VectorStoreManager(
             persist_directory=vector_store_path,
-            embedding_model=embedding_model,
-            use_openai=use_openai
+            embedding_function=self.embeddings,
+            use_openai=False  # Always use ChromaDB with custom embeddings
         )
         
         self.conversation_history = ConversationHistory()
         
         # Initialize LLM
-        if use_openai:
-            self.llm = ChatOpenAI(
-                model_name=model_name,
-                temperature=0.7,
-                streaming=False
-            )
+        if use_openai and OPENAI_AVAILABLE and openai_api_key:
+            try:
+                self.llm = ChatOpenAI(
+                    model_name=model_name,
+                    temperature=model_temperature,
+                    streaming=False
+                )
+                logger.info(f"✅ Using OpenAI LLM: {model_name}")
+            except Exception as e:
+                logger.warning(f"Failed to initialize OpenAI LLM: {e}")
+                logger.info("Falling back to free LLM...")
+                self.llm = get_free_llm(free_llm_model)
+                self.use_openai = False
         else:
-            # Fallback to a basic completion model
-            self.llm = OpenAI(temperature=0.7)
+            logger.info(f"Using free LLM: {free_llm_model}")
+            self.llm = get_free_llm(free_llm_model)
         
         # Initialize prompts
         self._setup_prompts()
@@ -148,13 +195,14 @@ class RAGChatbot:
     def _setup_prompts(self):
         """Setup prompt templates for the chatbot."""
         self.system_prompt = """You are a helpful AI assistant that answers questions based on the provided context documents. 
-        
+
 Guidelines:
 1. Use the context documents to provide accurate and detailed answers
 2. If the context doesn't contain enough information to answer the question, say so clearly
 3. Always cite the source documents when possible
 4. Maintain a helpful and conversational tone
 5. Consider the conversation history for context-aware responses
+6. Keep responses concise but informative
 
 Context Documents:
 {context}
@@ -164,17 +212,23 @@ Conversation History:
 
 Current Question: {question}
 
-Please provide a comprehensive answer based on the context provided."""
+Please provide a helpful answer based on the context provided."""
         
         self.chat_prompt = ChatPromptTemplate.from_messages([
             ("system", self.system_prompt),
             ("human", "{question}")
         ])
         
-        # Fallback prompt for non-chat models
-        self.completion_prompt = PromptTemplate(
-            input_variables=["context", "history", "question"],
-            template=self.system_prompt + "\n\nAnswer: "
+        # Simplified prompt for free models
+        self.simple_prompt = PromptTemplate(
+            input_variables=["context", "question"],
+            template="""Based on the following context, answer the question concisely and accurately.
+
+Context: {context}
+
+Question: {question}
+
+Answer:"""
         )
     
     def _setup_retrieval_chain(self):
@@ -294,14 +348,18 @@ Please provide a comprehensive answer based on the context provided."""
                 for doc in relevant_docs
             ])
             
+            # Truncate context if too long for free models
+            if not self.use_openai and len(context) > 2000:
+                context = context[:2000] + "..."
+            
             # Get conversation history if requested
             history = ""
-            if use_history:
+            if use_history and self.use_openai:
                 history = self.conversation_history.get_context_string()
             
             # Generate response using the appropriate method
-            if hasattr(self.llm, 'predict_messages'):
-                # For chat models
+            if self.use_openai and hasattr(self.llm, 'predict_messages'):
+                # For OpenAI chat models
                 messages = [
                     SystemMessage(content=self.system_prompt.format(
                         context=context,
@@ -313,13 +371,17 @@ Please provide a comprehensive answer based on the context provided."""
                 response = self.llm.predict_messages(messages)
                 response_text = response.content
             else:
-                # For completion models
-                prompt = self.completion_prompt.format(
+                # For free models - use simpler prompt
+                prompt = self.simple_prompt.format(
                     context=context,
-                    history=history,
                     question=query
                 )
                 response_text = self.llm.predict(prompt)
+            
+            # Clean up response
+            response_text = response_text.strip()
+            if not response_text:
+                response_text = "I understand your question, but I need more context to provide a helpful answer."
             
             # Prepare sources information
             sources = []
@@ -340,12 +402,13 @@ Please provide a comprehensive answer based on the context provided."""
                 "sources": sources,
                 "query": query,
                 "timestamp": datetime.now().isoformat(),
-                "num_sources": len(relevant_docs)
+                "num_sources": len(relevant_docs),
+                "model_type": "OpenAI" if self.use_openai else "Free"
             }
             
         except Exception as e:
             logger.error(f"Error generating response: {str(e)}")
-            error_response = f"I encountered an error while processing your question: {str(e)}"
+            error_response = f"I encountered an error while processing your question. Please try rephrasing your question or try again."
             return {
                 "response": error_response,
                 "sources": [],
@@ -370,6 +433,18 @@ Please provide a comprehensive answer based on the context provided."""
     def get_vector_store_info(self) -> Dict[str, Any]:
         """Get information about the vector store."""
         return self.vector_store_manager.get_collection_info()
+    
+    def get_system_info(self) -> Dict[str, Any]:
+        """Get information about the current system configuration."""
+        availability = check_model_availability()
+        return {
+            "model_type": "OpenAI" if self.use_openai else "Free",
+            "llm_model": self.model_name if self.use_openai else self.free_llm_model,
+            "embedding_model": self.embedding_model if self.use_openai else self.free_embedding_model,
+            "device": self.model_device,
+            "availability": availability,
+            "vector_store": self.get_vector_store_info()
+        }
     
     def clear_conversation_history(self):
         """Clear the conversation history."""
